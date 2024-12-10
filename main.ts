@@ -1,33 +1,124 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, requestUrl, getBlobArrayBuffer } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface LocalAIPluginSettings {
+	localai_url: string;
+	transcription_endpoint: string;
+	transcription_model: string;
+	text_generation_endpoint: string,
+	text_generation_model: string,
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: LocalAIPluginSettings = {
+	//localai_url: "http://localhost:8080",
+	localai_url: "http://10.0.0.34:9090",
+	transcription_endpoint: '/v1/audio/transcriptions',
+	transcription_model: 'whisper-1',
+	text_generation_endpoint: '/v1/chat/completions',
+	text_generation_model: 'qwen2.5-1.5b-instruct',
 }
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export const randomString = (length: number) => Array(length + 1).join((Math.random().toString(36) + '00000000000000000').slice(2, 18)).slice(0, length)
+export default class LocalAIPlugin extends Plugin {
+	settings: LocalAIPluginSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		this.addCommand({
+			id: 'transcribe-selected',
+			name: 'Transcribe Selected',
+			editorCallback: async (editor, view) => {
+				const selection = editor.getSelection();
+				const match = selection.match(/!\[\[(.*?)\]\]/);
+				if (match) {
+					const filename = match[1];
+					console.log(filename);
+
+					const file = this.app.vault.getFiles().find(f=> f.name === filename)
+					//@ts-ignore
+					//const file = this.app.vault.adapter.basePath + "/" + this.app.vault.getFiles().find(f=> f.name === filename)?.path
+
+					if(file)
+					{
+						const url = this.settings.localai_url + this.settings.transcription_endpoint;
+						const model = this.settings.transcription_model;
+						console.log(url);
+						console.log(model);
+						console.log(file);
+
+						const boundary_string = `Boundary${randomString(16)}`;
+						const boundary = `------${boundary_string}`;
+
+						const file_buffer = new Blob([await this.app.vault.readBinary(file)]);
+						const chunks: Uint8Array | ArrayBuffer[] = [];
+
+						chunks.push(new TextEncoder().encode(`${boundary}\r\n`));
+						chunks.push(new TextEncoder().encode(`Content-Disposition: form-data; name="file"; filename="blob"\r\nContent-Type: "application/octet-stream"\r\n\r\n`));
+						chunks.push(await getBlobArrayBuffer(file_buffer));
+						chunks.push(new TextEncoder().encode('\r\n'));
+
+						chunks.push(new TextEncoder().encode(`${boundary}\r\n`));
+						chunks.push(new TextEncoder().encode(`Content-Disposition: form-data; name="model"\r\n\r\n`));
+						chunks.push(new TextEncoder().encode(`${model}\r\n`));
+						await Promise.all(chunks);
+						chunks.push(new TextEncoder().encode(`${boundary}--\r\n`));
+						const payload = await new Blob(chunks).arrayBuffer();
+
+						try {
+							const request = {
+								method: 'POST',
+								url: url,
+								contentType: `multipart/form-data; boundary=----${boundary_string}`,
+								body: payload,
+							}
+							console.log(request);
+							const response = await requestUrl(request);
+							console.log(response);
+
+							const data = response.json;
+							const segments = data.segments;
+							const text = segments.map((segment: any) => "\\[" + (segment.start / 1e+9) + " s\\]: " + segment.text).join("\n");
+
+							const cursor = editor.getCursor();
+							editor.setLine(cursor.line+1, text + "\n" + editor.getLine(cursor.line+1));
+
+						}
+						catch (error) {
+							new Notice('Error transcribing audio');
+						}
+
+					}
+				}
+			}
+
 		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		//this.addCommand({
+		//	id: 'summerize-selected',
+		//	name: 'Summerize Selected',
+		//	editorCallback: async (editor, view) => {
+		//		const selection = editor.getSelection();
+		//		const url = this.settings.localai_url + this.settings.text_generation_endpoint;
+		//		const model = this.settings.text_generation_model;
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		//		const payload = {
+		//			model: model,
+		//			messages: [
+		//				{ "role": "user", "content": "Summerize the following: " },
+		//				{ "role": "user", "content": selection },
+		//			],
+		//		}
+		//		const request = {
+		//			method: 'POST',
+		//			url: url,
+		//			contentType: 'application/json',
+		//			body: JSON.stringify(payload),
+		//		}
+		//		console.log(request);
+		//		const response = await requestUrl(request);
+		//		console.log(response);
+		//	}
+		//});
 
+		/*
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
 			id: 'open-sample-modal-simple',
@@ -65,9 +156,6 @@ export default class MyPlugin extends Plugin {
 			}
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
 		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
@@ -76,6 +164,11 @@ export default class MyPlugin extends Plugin {
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		*/
+
+		// This adds a settings tab so the user can configure various aspects of the plugin
+		this.addSettingTab(new LocalAISettingTab(this.app, this));
+
 	}
 
 	onunload() {
@@ -91,6 +184,7 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
+/*
 class SampleModal extends Modal {
 	constructor(app: App) {
 		super(app);
@@ -106,11 +200,12 @@ class SampleModal extends Modal {
 		contentEl.empty();
 	}
 }
+*/
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+class LocalAISettingTab extends PluginSettingTab {
+	plugin: LocalAIPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: LocalAIPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -119,15 +214,54 @@ class SampleSettingTab extends PluginSettingTab {
 		const {containerEl} = this;
 
 		containerEl.empty();
-
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('LocalAI URL')
+			.setDesc('Enter the url of your LocalAI instance')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('http://localhost:8080')
+				.setValue(this.plugin.settings.localai_url)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.localai_url = value;
+					await this.plugin.saveSettings();
+				}));
+		new Setting(containerEl)
+			.setName('Transcription Endpoint')
+			.setDesc('Endpoint for transcription requests')
+			.addText(text => text
+				.setValue(this.plugin.settings.transcription_endpoint)
+				.setPlaceholder('/v1/audio/transcriptions')
+				.onChange(async (value) => {
+					this.plugin.settings.transcription_endpoint = value;
+					await this.plugin.saveSettings();
+				}));
+		new Setting(containerEl)
+			.setName('Transcription Model')
+			.setDesc('Select the model to use for transcription')
+			.addText(text => text
+				.setPlaceholder('whisper-1')
+				.setValue(this.plugin.settings.transcription_model)
+				.onChange(async (value) => {
+					this.plugin.settings.transcription_model = value;
+					await this.plugin.saveSettings();
+				}));
+		new Setting(containerEl)
+			.setName('Text Generation Endpoint')
+			.setDesc('Endpoint for text generation requests')
+			.addText(text => text
+				.setValue(this.plugin.settings.text_generation_endpoint)
+				.setPlaceholder('/v1/chat/completions')
+				.onChange(async (value) => {
+					this.plugin.settings.text_generation_endpoint = value;
+					await this.plugin.saveSettings();
+				}));
+		new Setting(containerEl)
+			.setName('Text Generation Model')
+			.setDesc('Select the model to use for text generation')
+			.addText(text => text
+				.setPlaceholder('qwen2.5-1.5b-instruct')
+				.setValue(this.plugin.settings.text_generation_model)
+				.onChange(async (value) => {
+					this.plugin.settings.text_generation_model = value;
 					await this.plugin.saveSettings();
 				}));
 	}
