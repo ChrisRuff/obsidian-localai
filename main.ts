@@ -39,11 +39,11 @@ export default class LocalAIPlugin extends Plugin {
 
 					if(file)
 					{
+						const cursor_start = editor.getCursor('from');
+						const cursor_end = editor.getCursor('to');
+
 						const url = this.settings.localai_url + this.settings.transcription_endpoint;
 						const model = this.settings.transcription_model;
-						console.log(url);
-						console.log(model);
-						console.log(file);
 
 						const boundary_string = `Boundary${randomString(16)}`;
 						const boundary = `------${boundary_string}`;
@@ -78,9 +78,7 @@ export default class LocalAIPlugin extends Plugin {
 							const segments = data.segments;
 							const text = segments.map((segment: any) => "\\[" + (segment.start / 1e+9) + " s\\]: " + segment.text).join("\n");
 
-							const cursor = editor.getCursor();
-							editor.setLine(cursor.line+1, text + "\n" + editor.getLine(cursor.line+1));
-
+							editor.replaceRange(selection + "\n" + text, cursor_start, cursor_end);
 						}
 						catch (error) {
 							new Notice('Error transcribing audio');
@@ -91,32 +89,39 @@ export default class LocalAIPlugin extends Plugin {
 			}
 
 		});
-		//this.addCommand({
-		//	id: 'summerize-selected',
-		//	name: 'Summerize Selected',
-		//	editorCallback: async (editor, view) => {
-		//		const selection = editor.getSelection();
-		//		const url = this.settings.localai_url + this.settings.text_generation_endpoint;
-		//		const model = this.settings.text_generation_model;
+		this.addCommand({
+			id: 'summerize-selected',
+			name: 'Summerize Selected',
+			editorCallback: async (editor, view) => {
+				const cursor_start = editor.getCursor('from');
+				const cursor_end = editor.getCursor('to');
+				const selection = editor.getSelection();
+				const url = this.settings.localai_url + this.settings.text_generation_endpoint;
+				const model = this.settings.text_generation_model;
 
-		//		const payload = {
-		//			model: model,
-		//			messages: [
-		//				{ "role": "user", "content": "Summerize the following: " },
-		//				{ "role": "user", "content": selection },
-		//			],
-		//		}
-		//		const request = {
-		//			method: 'POST',
-		//			url: url,
-		//			contentType: 'application/json',
-		//			body: JSON.stringify(payload),
-		//		}
-		//		console.log(request);
-		//		const response = await requestUrl(request);
-		//		console.log(response);
-		//	}
-		//});
+				const payload = {
+					model: model,
+					messages: [
+						{ "role": "user", "content": "Summerize the following: " },
+						{ "role": "user", "content": selection },
+					],
+				}
+				const request = {
+					method: 'POST',
+					url: url,
+					contentType: 'application/json',
+					body: JSON.stringify(payload),
+				}
+				console.log(request);
+				const response = await requestUrl(request);
+				console.log(response);
+
+				const data = response.json;
+				const text = data.choices[0].message.content;
+
+				editor.replaceRange(selection + "\n" + text, cursor_start, cursor_end);
+			}
+		});
 
 		/*
 		// This adds a simple command that can be triggered anywhere
